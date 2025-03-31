@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿// BSP Dungeon Generator - Packed layout with door placement
+using System.Collections.Generic;
 using UnityEngine;
 
 public class DungeonGenerator : MonoBehaviour
@@ -6,29 +7,22 @@ public class DungeonGenerator : MonoBehaviour
     [Header("Dungeon Settings")]
     public int dungeonWidth = 50;
     public int dungeonHeight = 50;
-    public int roomMinSize = 4;
-    public int roomMaxSize = 10;
-    public int roomCount = 20;
+    public int roomMinSize = 6;
+    public int roomMaxSize = 20;
+    public int maxSplits = 5;
 
     private List<Room> rooms = new List<Room>();
-    private List<GameObject> roomObjects = new List<GameObject>();
-    private List<Door> doors = new List<Door>();
-    private Camera mainCamera;
+    private List<GameObject> roomVisuals = new List<GameObject>();
 
     void Start()
     {
-        mainCamera = Camera.main;
-        GenerateRooms();
-        PlaceDoors();
-        EnsureConnectivity();
-        DrawRooms();
-        DrawDoors();
-        AdjustCameraView();
+        DrawDungeonBounds();
+        GenerateBSPDungeon();
     }
 
     void Update()
     {
-        if (Input.GetKeyDown(KeyCode.R)) // Press "R" to regenerate dungeon
+        if (Input.GetKeyDown(KeyCode.R))
         {
             RegenerateDungeon();
         }
@@ -36,134 +30,71 @@ public class DungeonGenerator : MonoBehaviour
 
     void RegenerateDungeon()
     {
-        ClearDungeon();
-        GenerateRooms();
-        PlaceDoors();
-        EnsureConnectivity();
-        DrawRooms();
-        DrawDoors();
-        AdjustCameraView();
-    }
-
-    void ClearDungeon()
-    {
-        foreach (GameObject obj in roomObjects)
+        foreach (GameObject go in roomVisuals)
         {
-            Destroy(obj);
+            Destroy(go);
         }
+        roomVisuals.Clear();
         rooms.Clear();
-        doors.Clear();
-        roomObjects.Clear();
+        GenerateBSPDungeon();
     }
 
-    void GenerateRooms()
+    void DrawDungeonBounds()
     {
-        int xOffset = 0, yOffset = 0;
-        for (int i = 0; i < roomCount; i++)
+        GameObject boundsObj = new GameObject("DungeonBounds");
+        LineRenderer lr = boundsObj.AddComponent<LineRenderer>();
+
+        lr.positionCount = 5;
+        lr.startWidth = 0.3f;
+        lr.endWidth = 0.3f;
+        lr.useWorldSpace = true;
+
+        lr.material = new Material(Shader.Find("Sprites/Default"));
+        lr.startColor = Color.yellow;
+        lr.endColor = Color.yellow;
+
+        Vector3[] points = new Vector3[]
         {
-            int width = Random.Range(roomMinSize, roomMaxSize + 1);
-            int height = Random.Range(roomMinSize, roomMaxSize + 1);
+            new Vector3(0, 0, 0),
+            new Vector3(dungeonWidth, 0, 0),
+            new Vector3(dungeonWidth, 0, dungeonHeight),
+            new Vector3(0, 0, dungeonHeight),
+            new Vector3(0, 0, 0)
+        };
 
-            Room newRoom = new Room(xOffset, yOffset, width, height);
-
-            rooms.Add(newRoom);
-
-            xOffset += width + 1; // Move horizontally
-            if (xOffset >= dungeonWidth) // Move to next row if needed
-            {
-                xOffset = 0;
-                yOffset += height + 1;
-            }
-        }
+        lr.SetPositions(points);
     }
 
-    void PlaceDoors()
+    void GenerateBSPDungeon()
     {
-        foreach (Room roomA in rooms)
+        Leaf root = new Leaf(0, 0, dungeonWidth, dungeonHeight);
+        List<Leaf> leaves = new List<Leaf> { root };
+
+        bool didSplit = true;
+        for (int i = 0; i < maxSplits && didSplit; i++)
         {
-            foreach (Room roomB in rooms)
+            didSplit = false;
+            List<Leaf> newLeaves = new List<Leaf>();
+
+            foreach (Leaf leaf in leaves)
             {
-                if (roomA == roomB) continue;
-
-                if (roomA.IsAdjacent(roomB, out Vector3 doorPosition))
+                if (leaf.left == null && leaf.right == null)
                 {
-                    doors.Add(new Door(doorPosition));
-                }
-            }
-        }
-    }
-
-    void EnsureConnectivity()
-    {
-        HashSet<Room> visited = new HashSet<Room>();
-        Queue<Room> queue = new Queue<Room>();
-
-        if (rooms.Count > 0)
-        {
-            queue.Enqueue(rooms[0]); // Start from the first room
-            visited.Add(rooms[0]);
-        }
-
-        while (queue.Count > 0)
-        {
-            Room current = queue.Dequeue();
-            foreach (Room neighbor in GetConnectedRooms(current))
-            {
-                if (!visited.Contains(neighbor))
-                {
-                    visited.Add(neighbor);
-                    queue.Enqueue(neighbor);
-                }
-            }
-        }
-
-        if (visited.Count < rooms.Count) // Some rooms are unreachable
-        {
-            foreach (Room room in rooms)
-            {
-                if (!visited.Contains(room))
-                {
-                    Room closest = FindClosestConnectedRoom(room, visited);
-                    if (closest != null && room.IsAdjacent(closest, out Vector3 doorPosition))
+                    if (leaf.Split(roomMinSize, roomMaxSize))
                     {
-                        doors.Add(new Door(doorPosition));
-                        visited.Add(room);
+                        newLeaves.Add(leaf.left);
+                        newLeaves.Add(leaf.right);
+                        didSplit = true;
                     }
                 }
             }
-        }
-    }
 
-    List<Room> GetConnectedRooms(Room room)
-    {
-        List<Room> connectedRooms = new List<Room>();
-        foreach (Door door in doors)
-        {
-            foreach (Room other in rooms)
-            {
-                if (room != other && other.ContainsPoint(door.position))
-                {
-                    connectedRooms.Add(other);
-                }
-            }
+            leaves.AddRange(newLeaves);
         }
-        return connectedRooms;
-    }
 
-    Room FindClosestConnectedRoom(Room room, HashSet<Room> connectedRooms)
-    {
-        Room closest = null;
-        float minDist = float.MaxValue;
-        foreach (Room r in connectedRooms)
-        {
-            float distance = Vector3.Distance(new Vector3(room.x, 0, room.y), new Vector3(r.x, 0, r.y));
-            if (distance < minDist)
-            {
-                minDist = distance;
-                closest = r;
-            }
-        }
-        return closest;
+        root.CreateRooms(rooms);
+        DrawRooms();
+        PlaceDoors();
     }
 
     void DrawRooms()
@@ -171,74 +102,77 @@ public class DungeonGenerator : MonoBehaviour
         foreach (Room room in rooms)
         {
             GameObject roomObj = new GameObject($"Room ({room.x}, {room.y})");
-            LineRenderer lr = roomObj.AddComponent<LineRenderer>();
+            roomVisuals.Add(roomObj);
 
+            LineRenderer lr = roomObj.AddComponent<LineRenderer>();
             lr.startWidth = 0.2f;
             lr.endWidth = 0.2f;
-            lr.positionCount = 5;
             lr.useWorldSpace = true;
 
-            Vector3[] points = new Vector3[]
-            {
-                new Vector3(room.x, 0, room.y),
-                new Vector3(room.x + room.width, 0, room.y),
-                new Vector3(room.x + room.width, 0, room.y + room.height),
-                new Vector3(room.x, 0, room.y + room.height),
-                new Vector3(room.x, 0, room.y)
-            };
+            List<Vector3> points = new List<Vector3>();
 
-            lr.SetPositions(points);
+            if (room.y > 0)
+                points.Add(new Vector3(room.x, 0, room.y));
+            if (room.y > 0)
+                points.Add(new Vector3(room.x + room.width, 0, room.y));
+            if (room.x + room.width < dungeonWidth)
+                points.Add(new Vector3(room.x + room.width, 0, room.y + room.height));
+            if (room.y + room.height < dungeonHeight)
+                points.Add(new Vector3(room.x, 0, room.y + room.height));
+            if (room.x > 0)
+                points.Add(new Vector3(room.x, 0, room.y));
+
+            lr.positionCount = points.Count;
+            lr.SetPositions(points.ToArray());
             lr.material = new Material(Shader.Find("Sprites/Default"));
             lr.startColor = Color.blue;
             lr.endColor = Color.blue;
-
-            roomObjects.Add(roomObj);
         }
     }
 
-    void DrawDoors()
+    void PlaceDoors()
     {
-        foreach (Door door in doors)
+        for (int i = 0; i < rooms.Count; i++)
         {
-            GameObject doorObj = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            doorObj.transform.position = door.position;
-            doorObj.transform.localScale = new Vector3(0.5f, 1, 0.5f);
-            doorObj.GetComponent<Renderer>().material.color = Color.red;
-            roomObjects.Add(doorObj);
+            for (int j = i + 1; j < rooms.Count; j++)
+            {
+                Room a = rooms[i];
+                Room b = rooms[j];
+
+                if (a.x == b.x + b.width || b.x == a.x + a.width) // Vertical neighbors
+                {
+                    int yMin = Mathf.Max(a.y, b.y) + 1;
+                    int yMax = Mathf.Min(a.y + a.height, b.y + b.height) - 1;
+                    if (yMax > yMin)
+                    {
+                        int doorY = Random.Range(yMin, yMax);
+                        int doorX = (a.x == b.x + b.width) ? a.x : b.x;
+                        PlaceDoor(doorX, doorY);
+                    }
+                }
+                else if (a.y == b.y + b.height || b.y == a.y + a.height) // Horizontal neighbors
+                {
+                    int xMin = Mathf.Max(a.x, b.x) + 1;
+                    int xMax = Mathf.Min(a.x + a.width, b.x + b.width) - 1;
+                    if (xMax > xMin)
+                    {
+                        int doorX = Random.Range(xMin, xMax);
+                        int doorY = (a.y == b.y + b.height) ? a.y : b.y;
+                        PlaceDoor(doorX, doorY);
+                    }
+                }
+            }
         }
     }
 
-    void AdjustCameraView()
+    void PlaceDoor(int x, int y)
     {
-        if (mainCamera == null) return;
-
-        float minX = float.MaxValue, minY = float.MaxValue;
-        float maxX = float.MinValue, maxY = float.MinValue;
-
-        foreach (Room room in rooms)
-        {
-            minX = Mathf.Min(minX, room.x);
-            minY = Mathf.Min(minY, room.y);
-            maxX = Mathf.Max(maxX, room.x + room.width);
-            maxY = Mathf.Max(maxY, room.y + room.height);
-        }
-
-        Vector3 center = new Vector3((minX + maxX) / 2, 20, (minY + maxY) / 2);
-        mainCamera.transform.position = center;
-
-        float width = maxX - minX;
-        float height = maxY - minY;
-        float maxDimension = Mathf.Max(width, height);
-
-        if (mainCamera.orthographic)
-        {
-            mainCamera.orthographicSize = maxDimension / 2 + 5;
-        }
-        else
-        {
-            mainCamera.transform.position = new Vector3(center.x, maxDimension, center.z - maxDimension);
-            mainCamera.transform.LookAt(center);
-        }
+        GameObject doorObj = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        doorObj.name = $"Door ({x},{y})";
+        doorObj.transform.position = new Vector3(x + 0.5f, 0.1f, y + 0.5f);
+        doorObj.transform.localScale = new Vector3(0.5f, 0.2f, 0.5f);
+        doorObj.GetComponent<MeshRenderer>().material.color = Color.red;
+        roomVisuals.Add(doorObj);
     }
 }
 
@@ -253,21 +187,57 @@ public class Room
         this.width = width;
         this.height = height;
     }
+}
 
-    public bool IsAdjacent(Room other, out Vector3 doorPosition)
+public class Leaf
+{
+    public int x, y, width, height;
+    public Leaf left, right;
+    public Room room;
+
+    public Leaf(int x, int y, int width, int height)
     {
-        doorPosition = new Vector3((x + other.x) / 2, 0, (y + other.y) / 2);
+        this.x = x; this.y = y;
+        this.width = width; this.height = height;
+    }
+
+    public bool Split(int minSize, int maxSize)
+    {
+        if (left != null || right != null) return false;
+
+        bool splitH = Random.value > 0.5f;
+        if (width > height && width / height >= 1.25f) splitH = false;
+        else if (height > width && height / width >= 1.25f) splitH = true;
+
+        int max = (splitH ? height : width) - minSize;
+        if (max <= minSize) return false;
+
+        int split = Random.Range(minSize, max);
+        if (splitH)
+        {
+            left = new Leaf(x, y, width, split);
+            right = new Leaf(x, y + split, width, height - split);
+        }
+        else
+        {
+            left = new Leaf(x, y, split, height);
+            right = new Leaf(x + split, y, width - split, height);
+        }
+
         return true;
     }
 
-    public bool ContainsPoint(Vector3 point)
+    public void CreateRooms(List<Room> rooms)
     {
-        return x <= point.x && point.x <= x + width && y <= point.z && point.z <= y + height;
+        if (left != null || right != null)
+        {
+            left?.CreateRooms(rooms);
+            right?.CreateRooms(rooms);
+        }
+        else
+        {
+            room = new Room(x, y, width, height);
+            rooms.Add(room);
+        }
     }
-}
-
-public class Door
-{
-    public Vector3 position;
-    public Door(Vector3 pos) { position = pos; }
 }
