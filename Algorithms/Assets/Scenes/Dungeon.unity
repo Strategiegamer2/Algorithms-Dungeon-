@@ -150,9 +150,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   dungeonWidth: 100
   dungeonHeight: 120
-  roomMinSize: 5
-  roomMaxSize: 30
-  roomCount: 30
+  roomMinSize: 10
+  roomMaxSize: 50
+  maxSplits: 7
 --- !u!4 &159721005
 Transform:
   m_ObjectHideFlags: 0
