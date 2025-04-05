@@ -148,11 +148,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e670ac06854b87c4592a419a368702c1, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  dungeonWidth: 100
-  dungeonHeight: 120
-  roomMinSize: 10
-  roomMaxSize: 50
-  maxSplits: 7
+  dungeonWidth: 50
+  dungeonHeight: 50
+  roomMinSize: 6
+  splitDelay: 0.05
+  lineDrawDelay: 0.02
+  doorDelay: 0.01
 --- !u!4 &159721005
 Transform:
   m_ObjectHideFlags: 0
@@ -162,7 +163,7 @@ Transform:
   m_GameObject: {fileID: 159721003}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalPosition: {x: -220.5, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []

@@ -1,4 +1,5 @@
-﻿// BSP Dungeon Generator - Packed layout with door placement
+﻿// BSP Dungeon Generator - Fix Blue Wall Overlap With Yellow Bounds, Remove Diagonal Lines
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -8,22 +9,26 @@ public class DungeonGenerator : MonoBehaviour
     public int dungeonWidth = 50;
     public int dungeonHeight = 50;
     public int roomMinSize = 6;
-    public int roomMaxSize = 20;
-    public int maxSplits = 5;
+    public float splitDelay = 0.05f;
+    public float lineDrawDelay = 0.02f;
+    public float doorDelay = 0.01f;
 
     private List<Room> rooms = new List<Room>();
     private List<GameObject> roomVisuals = new List<GameObject>();
+    private List<Leaf> activeLeaves = new List<Leaf>();
+    private Dictionary<Room, List<Room>> graph = new Dictionary<Room, List<Room>>();
 
     void Start()
     {
         DrawDungeonBounds();
-        GenerateBSPDungeon();
+        StartCoroutine(GenerateBSPDungeonAnimated());
     }
 
     void Update()
     {
         if (Input.GetKeyDown(KeyCode.R))
         {
+            StopAllCoroutines();
             RegenerateDungeon();
         }
     }
@@ -36,7 +41,9 @@ public class DungeonGenerator : MonoBehaviour
         }
         roomVisuals.Clear();
         rooms.Clear();
-        GenerateBSPDungeon();
+        activeLeaves.Clear();
+        graph.Clear();
+        StartCoroutine(GenerateBSPDungeonAnimated());
     }
 
     void DrawDungeonBounds()
@@ -65,39 +72,57 @@ public class DungeonGenerator : MonoBehaviour
         lr.SetPositions(points);
     }
 
-    void GenerateBSPDungeon()
+    IEnumerator GenerateBSPDungeonAnimated()
     {
         Leaf root = new Leaf(0, 0, dungeonWidth, dungeonHeight);
-        List<Leaf> leaves = new List<Leaf> { root };
+        activeLeaves.Add(root);
 
-        bool didSplit = true;
-        for (int i = 0; i < maxSplits && didSplit; i++)
+        Queue<Leaf> queue = new Queue<Leaf>();
+        queue.Enqueue(root);
+
+        while (queue.Count > 0)
         {
-            didSplit = false;
-            List<Leaf> newLeaves = new List<Leaf>();
+            Leaf current = queue.Dequeue();
+            bool splitSuccess = false;
 
-            foreach (Leaf leaf in leaves)
+            if (current.height >= roomMinSize * 2)
+                splitSuccess = current.Split(true, roomMinSize);
+            else if (current.width >= roomMinSize * 2)
+                splitSuccess = current.Split(false, roomMinSize);
+
+            if (splitSuccess)
             {
-                if (leaf.left == null && leaf.right == null)
-                {
-                    if (leaf.Split(roomMinSize, roomMaxSize))
-                    {
-                        newLeaves.Add(leaf.left);
-                        newLeaves.Add(leaf.right);
-                        didSplit = true;
-                    }
-                }
+                queue.Enqueue(current.left);
+                queue.Enqueue(current.right);
+                activeLeaves.Add(current.left);
+                activeLeaves.Add(current.right);
+                yield return new WaitForSeconds(splitDelay);
             }
-
-            leaves.AddRange(newLeaves);
         }
 
-        root.CreateRooms(rooms);
-        DrawRooms();
-        PlaceDoors();
+        foreach (Leaf leaf in activeLeaves)
+        {
+            if (leaf.left == null && leaf.right == null)
+            {
+                Room room = new Room(leaf.x, leaf.y, leaf.width, leaf.height);
+                rooms.Add(room);
+                graph.Add(room, new List<Room>());
+            }
+        }
+
+        rooms.Sort((a, b) => {
+            int ay = a.y + a.height;
+            int by = b.y + b.height;
+            if (ay != by) return by.CompareTo(ay);
+            return a.x.CompareTo(b.x);
+        });
+
+        yield return StartCoroutine(DrawRoomsAnimated());
+        yield return StartCoroutine(PlaceDoorsAnimated());
+        yield return StartCoroutine(DrawGraphConnections());
     }
 
-    void DrawRooms()
+    IEnumerator DrawRoomsAnimated()
     {
         foreach (Room room in rooms)
         {
@@ -108,29 +133,30 @@ public class DungeonGenerator : MonoBehaviour
             lr.startWidth = 0.2f;
             lr.endWidth = 0.2f;
             lr.useWorldSpace = true;
-
-            List<Vector3> points = new List<Vector3>();
-
-            if (room.y > 0)
-                points.Add(new Vector3(room.x, 0, room.y));
-            if (room.y > 0)
-                points.Add(new Vector3(room.x + room.width, 0, room.y));
-            if (room.x + room.width < dungeonWidth)
-                points.Add(new Vector3(room.x + room.width, 0, room.y + room.height));
-            if (room.y + room.height < dungeonHeight)
-                points.Add(new Vector3(room.x, 0, room.y + room.height));
-            if (room.x > 0)
-                points.Add(new Vector3(room.x, 0, room.y));
-
-            lr.positionCount = points.Count;
-            lr.SetPositions(points.ToArray());
             lr.material = new Material(Shader.Find("Sprites/Default"));
             lr.startColor = Color.blue;
             lr.endColor = Color.blue;
+
+            Vector3[] corners = new Vector3[]
+            {
+                new Vector3(room.x, 0, room.y),
+                new Vector3(room.x + room.width, 0, room.y),
+                new Vector3(room.x + room.width, 0, room.y + room.height),
+                new Vector3(room.x, 0, room.y + room.height),
+                new Vector3(room.x, 0, room.y)
+            };
+
+            lr.positionCount = 0;
+            for (int i = 0; i < corners.Length; i++)
+            {
+                lr.positionCount++;
+                lr.SetPosition(i, corners[i]);
+                yield return new WaitForSeconds(lineDrawDelay);
+            }
         }
     }
 
-    void PlaceDoors()
+    IEnumerator PlaceDoorsAnimated()
     {
         for (int i = 0; i < rooms.Count; i++)
         {
@@ -139,7 +165,7 @@ public class DungeonGenerator : MonoBehaviour
                 Room a = rooms[i];
                 Room b = rooms[j];
 
-                if (a.x == b.x + b.width || b.x == a.x + a.width) // Vertical neighbors
+                if (a.x == b.x + b.width || b.x == a.x + a.width)
                 {
                     int yMin = Mathf.Max(a.y, b.y) + 1;
                     int yMax = Mathf.Min(a.y + a.height, b.y + b.height) - 1;
@@ -147,10 +173,13 @@ public class DungeonGenerator : MonoBehaviour
                     {
                         int doorY = Random.Range(yMin, yMax);
                         int doorX = (a.x == b.x + b.width) ? a.x : b.x;
-                        PlaceDoor(doorX, doorY);
+                        PlaceDoorOnWall(doorX, doorY, true);
+                        graph[a].Add(b);
+                        graph[b].Add(a);
+                        yield return new WaitForSeconds(doorDelay);
                     }
                 }
-                else if (a.y == b.y + b.height || b.y == a.y + a.height) // Horizontal neighbors
+                else if (a.y == b.y + b.height || b.y == a.y + a.height)
                 {
                     int xMin = Mathf.Max(a.x, b.x) + 1;
                     int xMax = Mathf.Min(a.x + a.width, b.x + b.width) - 1;
@@ -158,19 +187,50 @@ public class DungeonGenerator : MonoBehaviour
                     {
                         int doorX = Random.Range(xMin, xMax);
                         int doorY = (a.y == b.y + b.height) ? a.y : b.y;
-                        PlaceDoor(doorX, doorY);
+                        PlaceDoorOnWall(doorX, doorY, false);
+                        graph[a].Add(b);
+                        graph[b].Add(a);
+                        yield return new WaitForSeconds(doorDelay);
                     }
                 }
             }
         }
     }
 
-    void PlaceDoor(int x, int y)
+    IEnumerator DrawGraphConnections()
+    {
+        foreach (Room a in graph.Keys)
+        {
+            Vector3 centerA = new Vector3(a.x + a.width / 2f, 0.06f, a.y + a.height / 2f);
+            foreach (Room b in graph[a])
+            {
+                if (a.GetHashCode() < b.GetHashCode())
+                {
+                    Vector3 centerB = new Vector3(b.x + b.width / 2f, 0.06f, b.y + b.height / 2f);
+
+                    GameObject lineObj = new GameObject("GraphEdge");
+                    LineRenderer lr = lineObj.AddComponent<LineRenderer>();
+                    lr.positionCount = 2;
+                    lr.SetPosition(0, centerA);
+                    lr.SetPosition(1, centerB);
+                    lr.material = new Material(Shader.Find("Sprites/Default"));
+                    lr.startColor = Color.green;
+                    lr.endColor = Color.green;
+                    lr.startWidth = 0.15f;
+                    lr.endWidth = 0.15f;
+                    roomVisuals.Add(lineObj);
+                    yield return null;
+                }
+            }
+        }
+    }
+
+    void PlaceDoorOnWall(int x, int y, bool isVertical)
     {
         GameObject doorObj = GameObject.CreatePrimitive(PrimitiveType.Cube);
         doorObj.name = $"Door ({x},{y})";
-        doorObj.transform.position = new Vector3(x + 0.5f, 0.1f, y + 0.5f);
-        doorObj.transform.localScale = new Vector3(0.5f, 0.2f, 0.5f);
+        doorObj.transform.position = new Vector3(x + (isVertical ? 0f : 0.5f), 0.05f, y + (isVertical ? 0.5f : 0f));
+        doorObj.transform.localScale = new Vector3(isVertical ? 0.1f : 0.6f, 0.1f, isVertical ? 0.6f : 0.1f);
         doorObj.GetComponent<MeshRenderer>().material.color = Color.red;
         roomVisuals.Add(doorObj);
     }
@@ -193,51 +253,30 @@ public class Leaf
 {
     public int x, y, width, height;
     public Leaf left, right;
-    public Room room;
 
     public Leaf(int x, int y, int width, int height)
     {
         this.x = x; this.y = y;
-        this.width = width; this.height = height;
+        this.width = width;
+        this.height = height;
     }
 
-    public bool Split(int minSize, int maxSize)
+    public bool Split(bool horizontal, int minSize)
     {
-        if (left != null || right != null) return false;
-
-        bool splitH = Random.value > 0.5f;
-        if (width > height && width / height >= 1.25f) splitH = false;
-        else if (height > width && height / width >= 1.25f) splitH = true;
-
-        int max = (splitH ? height : width) - minSize;
-        if (max <= minSize) return false;
-
-        int split = Random.Range(minSize, max);
-        if (splitH)
+        if (horizontal)
         {
+            if (height < minSize * 2) return false;
+            int split = Random.Range(minSize, height - minSize);
             left = new Leaf(x, y, width, split);
             right = new Leaf(x, y + split, width, height - split);
         }
         else
         {
+            if (width < minSize * 2) return false;
+            int split = Random.Range(minSize, width - minSize);
             left = new Leaf(x, y, split, height);
             right = new Leaf(x + split, y, width - split, height);
         }
-
         return true;
-    }
-
-    public void CreateRooms(List<Room> rooms)
-    {
-        if (left != null || right != null)
-        {
-            left?.CreateRooms(rooms);
-            right?.CreateRooms(rooms);
-        }
-        else
-        {
-            room = new Room(x, y, width, height);
-            rooms.Add(room);
-        }
     }
 }
