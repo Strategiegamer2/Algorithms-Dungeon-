@@ -155,11 +155,12 @@ MonoBehaviour:
   lineDrawDelay: 0.02
   doorDelay: 0.01
   percentRoomsToRemove: 50
-  seed: 43653
+  seed: 1
   floorPrefab: {fileID: 2247096994821176331, guid: 237ad7b6dc7492f4e8b7c95bcd880dbe, type: 3}
   doorPrefab: {fileID: 6310827500245734403, guid: 989fa0b5e17d5a146b40ddc3f5a00acf, type: 3}
   wallPrefab: {fileID: 1128594100234701277, guid: 21e3871ccce58b64d866e335a758c99c, type: 3}
   doorTopPrefab: {fileID: 1128594100234701277, guid: 9982f008601a5c54389029b05ba51fa7, type: 3}
+  playerPrefab: {fileID: 3621387109034812361, guid: e806b16675fb8d64cb9849111c981d03, type: 3}
 --- !u!4 &159721005
 Transform:
   m_ObjectHideFlags: 0

@@ -24,12 +24,14 @@ public class DungeonGenerator : MonoBehaviour
     public GameObject doorPrefab;
     public GameObject wallPrefab;
     public GameObject doorTopPrefab;
+    public GameObject playerPrefab;
 
     private List<Room> rooms = new List<Room>();
     private List<GameObject> roomVisuals = new List<GameObject>();
     private List<Leaf> activeLeaves = new List<Leaf>();
     private Dictionary<Room, List<Room>> graph = new Dictionary<Room, List<Room>>();
     private System.Random rng;
+    private GameObject spawnedPlayer;
 
     void Start()
     {
@@ -58,6 +60,13 @@ public class DungeonGenerator : MonoBehaviour
         rooms.Clear();
         activeLeaves.Clear();
         graph.Clear();
+
+        if (spawnedPlayer != null)
+        {
+            Destroy(spawnedPlayer);
+            spawnedPlayer = null;
+        }
+
         StartCoroutine(GenerateBSPDungeonAnimated());
     }
 
@@ -247,6 +256,7 @@ public class DungeonGenerator : MonoBehaviour
         yield return StartCoroutine(SpawnFloorTiles());
         yield return StartCoroutine(SpawnWalls(rooms, graph));
         yield return StartCoroutine(DrawGraphConnections());
+        SpawnPlayerInRandomRoom();
     }
 
 
@@ -314,84 +324,121 @@ public class DungeonGenerator : MonoBehaviour
             }
         }
 
-        HashSet<Vector2Int> wallOccupied = new();
-
+        HashSet<Edge> allEdges = new();
         foreach (Room room in rooms)
         {
-            // Only place top and right walls (standardized)
-            yield return StartCoroutine(SpawnWallLine(room.x, room.x + room.width, room.y + room.height, true, doorPositions, wallOccupied)); // top
-            yield return StartCoroutine(SpawnWallLine(room.y, room.y + room.height, room.x + room.width, false, doorPositions, wallOccupied)); // right
-
-            // Only place bottom if no other room adjacent below
-            if (!rooms.Any(r => r != room && r.x < room.x + room.width && r.x + r.width > room.x && r.y + r.height == room.y))
+            for (int x = room.x; x < room.x + room.width; x++)
             {
-                yield return StartCoroutine(SpawnWallLine(room.x, room.x + room.width, room.y, true, doorPositions, wallOccupied)); // bottom
+                allEdges.Add(new Edge(x, room.y, EdgeDirection.Horizontal)); // bottom
+                allEdges.Add(new Edge(x, room.y + room.height, EdgeDirection.Horizontal)); // top
             }
-
-            // Only place left if no other room adjacent on the left
-            if (!rooms.Any(r => r != room && r.y < room.y + room.height && r.y + r.height > room.y && r.x + r.width == room.x))
+            for (int y = room.y; y < room.y + room.height; y++)
             {
-                yield return StartCoroutine(SpawnWallLine(room.y, room.y + room.height, room.x, false, doorPositions, wallOccupied)); // left
+                allEdges.Add(new Edge(room.x, y, EdgeDirection.Vertical)); // left
+                allEdges.Add(new Edge(room.x + room.width, y, EdgeDirection.Vertical)); // right
             }
+        }
 
-            yield return null;
+        // Remove duplicates (shared edges)
+        HashSet<Edge> uniqueEdges = new();
+        foreach (Edge e in allEdges)
+        {
+            if (!uniqueEdges.Add(e))
+                uniqueEdges.Remove(e);
+        }
+
+        // Remove edges that are where doors are
+        uniqueEdges.RemoveWhere(e =>
+            doorPositions.Contains(e.Position) ||
+            (e.Direction == EdgeDirection.Horizontal && doorPositions.Contains(new Vector2Int(e.Position.x - 1, e.Position.y))) ||
+            (e.Direction == EdgeDirection.Vertical && doorPositions.Contains(new Vector2Int(e.Position.x, e.Position.y - 1)))
+        );
+
+        // Group by axis
+        var horizontalGroups = uniqueEdges.Where(e => e.Direction == EdgeDirection.Horizontal).GroupBy(e => e.Position.y);
+        var verticalGroups = uniqueEdges.Where(e => e.Direction == EdgeDirection.Vertical).GroupBy(e => e.Position.x);
+
+        foreach (var group in horizontalGroups)
+            yield return StartCoroutine(SpawnWallSegments(group.OrderBy(e => e.Position.x).ToList(), true));
+
+        foreach (var group in verticalGroups)
+            yield return StartCoroutine(SpawnWallSegments(group.OrderBy(e => e.Position.y).ToList(), false));
+    }
+
+    IEnumerator SpawnWallSegments(List<Edge> edges, bool horizontal)
+    {
+        int segmentStart = -99999;
+        int lastCoord = -99999;
+
+        foreach (var edge in edges)
+        {
+            int coord = horizontal ? edge.Position.x : edge.Position.y;
+            if (segmentStart == -99999)
+            {
+                segmentStart = coord;
+            }
+            else if (coord != lastCoord + 1)
+            {
+                yield return SpawnWallSegment(segmentStart, lastCoord + 1, horizontal, horizontal ? edge.Position.y : edge.Position.x);
+                segmentStart = coord;
+            }
+            lastCoord = coord;
+        }
+
+        if (segmentStart != -99999)
+        {
+            yield return SpawnWallSegment(segmentStart, lastCoord + 1, horizontal, horizontal ? edges[0].Position.y : edges[0].Position.x);
         }
     }
 
-
-    IEnumerator SpawnWallLine(int start, int end, int fixedCoord, bool horizontal, HashSet<Vector2Int> doorPositions, HashSet<Vector2Int> wallOccupied)
+    IEnumerator SpawnWallSegment(int start, int end, bool horizontal, int fixedCoord)
     {
-        int segmentStart = -1;
+        int length = end - start;
+        if (length <= 0) yield break;
 
-        for (int i = start; i <= end; i++)
-        {
-            Vector2Int pos = horizontal
-                ? new Vector2Int(i, fixedCoord)
-                : new Vector2Int(fixedCoord, i);
+        Vector3 scale = new Vector3(length, 3f, 1f);
+        Vector3 position = horizontal
+            ? new Vector3((start + end) / 2f, 1.5f, fixedCoord + 0.5f)
+            : new Vector3(fixedCoord + 0.5f, 1.5f, (start + end) / 2f);
 
-            bool isDoor = doorPositions.Contains(pos);
-            bool isTaken = wallOccupied.Contains(pos);
+        Quaternion rotation = horizontal ? Quaternion.identity : Quaternion.Euler(0f, 90f, 0f);
 
-            if (!isDoor && !isTaken && segmentStart == -1)
-            {
-                segmentStart = i;
-            }
-            else if ((isDoor || isTaken || i == end) && segmentStart != -1)
-            {
-                int segmentEnd = (isDoor || isTaken) ? i : i + 1;
-                int length = segmentEnd - segmentStart;
-
-                if (length > 0)
-                {
-                    // Mark positions as occupied
-                    for (int j = segmentStart; j < segmentEnd; j++)
-                    {
-                        Vector2Int p = horizontal ? new Vector2Int(j, fixedCoord) : new Vector2Int(fixedCoord, j);
-                        wallOccupied.Add(p);
-                    }
-
-                    // Place wall
-                    Vector3 position = horizontal
-                        ? new Vector3((segmentStart + segmentEnd) / 2f, 1.5f, fixedCoord + 0.5f)
-                        : new Vector3(fixedCoord + 0.5f, 1.5f, (segmentStart + segmentEnd) / 2f);
-
-                    Quaternion rotation = horizontal ? Quaternion.identity : Quaternion.Euler(0f, 90f, 0f);
-                    Vector3 scale = new Vector3(length, 3f, 1f);
-
-                    GameObject wall = Instantiate(wallPrefab, position, rotation);
-                    wall.transform.localScale = scale;
-                    wall.name = $"Wall ({segmentStart}-{segmentEnd}, {fixedCoord})";
-                    roomVisuals.Add(wall);
-                }
-
-                segmentStart = -1;
-            }
-        }
+        GameObject wall = Instantiate(wallPrefab, position, rotation);
+        wall.transform.localScale = scale;
+        wall.name = $"Wall ({start}-{end}, {fixedCoord})";
+        roomVisuals.Add(wall);
 
         yield return null;
     }
 
+    class Edge
+    {
+        public Vector2Int Position;
+        public EdgeDirection Direction;
 
+        public Edge(int x, int y, EdgeDirection direction)
+        {
+            Position = new Vector2Int(x, y);
+            Direction = direction;
+        }
+
+        public override bool Equals(object obj)
+        {
+            if (obj is not Edge other) return false;
+            return Position == other.Position && Direction == other.Direction;
+        }
+
+        public override int GetHashCode()
+        {
+            return Position.GetHashCode() ^ Direction.GetHashCode();
+        }
+    }
+
+    enum EdgeDirection
+    {
+        Horizontal,
+        Vertical
+    }
 
     IEnumerator PlaceDoorsAnimated(List<Room> finalRooms, Dictionary<Room, List<Room>> finalGraph, Dictionary<Room, List<Room>> actualDoorGraph)
     {
@@ -500,6 +547,21 @@ public class DungeonGenerator : MonoBehaviour
         return visited.Count == g.Count;
     }
 
+    bool HasRoomBelow(Room current)
+    {
+        return rooms.Any(r => r != current &&
+            r.x < current.x + current.width &&
+            r.x + r.width > current.x &&
+            r.y + r.height == current.y);
+    }
+
+    bool HasRoomLeft(Room current)
+    {
+        return rooms.Any(r => r != current &&
+            r.y < current.y + current.height &&
+            r.y + r.height > current.y &&
+            r.x + r.width == current.x);
+    }
 
     void PlaceDoorOnWall(int x, int y, bool isVertical)
     {
@@ -518,7 +580,28 @@ public class DungeonGenerator : MonoBehaviour
         roomVisuals.Add(top);
     }
 
+    void SpawnPlayerInRandomRoom()
+    {
+        if (rooms == null || rooms.Count == 0)
+        {
+            Debug.LogWarning("No rooms available to spawn the player.");
+            return;
+        }
 
+        Room randomRoom = rooms[Random.Range(0, rooms.Count)];
+        float centerX = randomRoom.x + randomRoom.width / 2f;
+        float centerZ = randomRoom.y + randomRoom.height / 2f;
+        Vector3 spawnPosition = new Vector3(centerX, 1f, centerZ); // Y = 1 to stand on floor
+
+        // Destroy previous player if it exists
+        if (spawnedPlayer != null)
+        {
+            Destroy(spawnedPlayer);
+        }
+
+        spawnedPlayer = Instantiate(playerPrefab, spawnPosition, Quaternion.identity);
+        spawnedPlayer.name = "Player";
+    }
 
     bool Overlap(int aStart, int aSize, int bStart, int bSize)
     {
