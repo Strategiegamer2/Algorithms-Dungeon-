@@ -269,13 +269,13 @@ public class DungeonGenerator : MonoBehaviour
             {
                 Debug.Log("Dungeon generated with full connectivity.");
 
-                // Defer all visual generation until here
                 yield return StartCoroutine(DrawRoomsAnimated());
                 yield return StartCoroutine(SpawnFloorTiles());
                 yield return StartCoroutine(SpawnWalls(rooms, graph));
                 yield return StartCoroutine(FillUnclaimedWallSegments());
                 yield return StartCoroutine(DrawGraphConnections());
                 SpawnPlayerInRandomRoom();
+                FindObjectOfType<PathfindingManager>()?.BuildGridFromScene();
             }
             else
             {
@@ -291,6 +291,7 @@ public class DungeonGenerator : MonoBehaviour
         foreach (Room room in rooms)
         {
             GameObject roomObj = new GameObject($"Room ({room.x}, {room.y})");
+            roomObj.transform.parent = roomContainer;
             roomVisuals.Add(roomObj);
 
             LineRenderer lr = roomObj.AddComponent<LineRenderer>();
@@ -557,7 +558,18 @@ public class DungeonGenerator : MonoBehaviour
                 }
             }
         }
+        StartCoroutine(HideGraphEdgesAfterDelay(3f));
     }
+    IEnumerator HideGraphEdgesAfterDelay(float delay)
+    {
+        yield return new WaitForSeconds(delay);
+
+        if (graphContainer != null)
+        {
+            Destroy(graphContainer.gameObject);
+        }
+    }
+
     IEnumerator FillUnclaimedWallSegments()
     {
         HashSet<Vector2Int> wallOccupied = new();
