@@ -1,0 +1,3 @@
+What is the complexity of my sub algorithem. What is the order of my algorithem, and what is the order of that order. 
+
+These kind of questions I can expect 
