@@ -154,7 +154,7 @@ MonoBehaviour:
   splitDelay: 0.05
   lineDrawDelay: 0.02
   doorDelay: 0.03
-  percentRoomsToRemove: 10
+  percentRoomsToRemove: 60
   seed: 1
   floorPrefab: {fileID: 2247096994821176331, guid: 237ad7b6dc7492f4e8b7c95bcd880dbe, type: 3}
   doorPrefab: {fileID: 6310827500245734403, guid: 989fa0b5e17d5a146b40ddc3f5a00acf, type: 3}
@@ -384,13 +384,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1447755014}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.38106406, y: -0, z: -0, w: 0.9245486}
-  m_LocalPosition: {x: 32.4, y: 44.4, z: -15.32}
+  m_LocalRotation: {x: 0.6689045, y: -0, z: -0, w: 0.74334836}
+  m_LocalPosition: {x: 32.4, y: 74.9, z: 29.18}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 44.799, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: 83.965, y: 0, z: 0}
 --- !u!114 &1447755018
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -463,6 +463,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1679761170}
   - component: {fileID: 1679761169}
+  - component: {fileID: 1679761171}
   m_Layer: 0
   m_Name: Pathfinding
   m_TagString: Untagged
@@ -482,6 +483,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8513bbe7309e01447b857a3e3834f56a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  useUnityNavMesh: 1
   tileSize: 1
 --- !u!4 &1679761170
 Transform:
@@ -498,6 +500,38 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1679761171
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1679761168}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7a5ac11cc976e418e8d13136b07e1f52, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_SerializedVersion: 0
+  m_AgentTypeID: 0
+  m_CollectObjects: 0
+  m_Size: {x: 10, y: 10, z: 10}
+  m_Center: {x: 0, y: 2, z: 0}
+  m_LayerMask:
+    serializedVersion: 2
+    m_Bits: 64
+  m_UseGeometry: 0
+  m_DefaultArea: 0
+  m_GenerateLinks: 0
+  m_IgnoreNavMeshAgent: 1
+  m_IgnoreNavMeshObstacle: 1
+  m_OverrideTileSize: 0
+  m_TileSize: 256
+  m_OverrideVoxelSize: 0
+  m_VoxelSize: 0.16666667
+  m_MinRegionArea: 0
+  m_NavMeshData: {fileID: 0}
+  m_BuildHeightMesh: 0
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

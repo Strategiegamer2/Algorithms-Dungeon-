@@ -1,14 +1,34 @@
 ﻿using System.Collections.Generic;
+using System.Linq;
+using Unity.AI.Navigation;
 using UnityEngine;
+using UnityEngine.AI;
 
+[RequireComponent(typeof(NavMeshSurface))]
 public class PathfindingManager : MonoBehaviour
 {
+    [Header("General Settings")]
+    public bool useUnityNavMesh = false;
+    public float tileSize = 1f;
+
     public Dictionary<Vector2Int, GridNode> grid = new();
-    public float tileSize = 1f; // default 1 unit per tile
+
+    private NavMeshSurface navMeshSurface;
+
+    private void Awake()
+    {
+        navMeshSurface = GetComponent<NavMeshSurface>();
+    }
 
     public void BuildGridFromScene()
     {
         grid.Clear();
+
+        if (useUnityNavMesh)
+        {
+            BakeNavMeshOnFloors();
+            return;
+        }
 
         GameObject[] allObjects = FindObjectsOfType<GameObject>();
 
@@ -23,12 +43,10 @@ public class PathfindingManager : MonoBehaviour
 
             Bounds bounds = col.bounds;
 
-            // Shrink bounds slightly to avoid overlap issues
             if (tag == "Wall" || tag == "Door")
             {
                 bounds.Expand(new Vector3(-0.2f, 0f, -0.2f));
             }
-
 
             Vector3 min = bounds.min;
             Vector3 max = bounds.max;
@@ -38,28 +56,18 @@ public class PathfindingManager : MonoBehaviour
                 for (int z = Mathf.FloorToInt(min.z); z <= Mathf.FloorToInt(max.z); z++)
                 {
                     Vector2Int gridPos = new Vector2Int(x, z);
-                    float groundedY = 0.05f; // consistent grounded height
-                    Vector3 worldPos = new Vector3(x + 0.5f, groundedY, z + 0.5f);
+                    Vector3 worldPos = new Vector3(x + 0.5f, 0.05f, z + 0.5f);
 
-                    // Apply priority rules
                     if (!grid.TryGetValue(gridPos, out GridNode existing))
                     {
-                        // Not set yet — initialize
                         grid[gridPos] = new GridNode(gridPos, worldPos, tag != "Wall");
                     }
                     else
                     {
-                        // Already exists — apply priority
                         if (tag == "Door")
-                        {
-                            // Highest priority — override all
                             grid[gridPos] = new GridNode(gridPos, worldPos, true);
-                        }
                         else if (tag == "Wall" && existing.walkable)
-                        {
-                            // Override only if current is walkable
                             grid[gridPos] = new GridNode(gridPos, worldPos, false);
-                        }
                     }
                 }
             }
@@ -68,14 +76,38 @@ public class PathfindingManager : MonoBehaviour
         Debug.Log($"✅ Grid built with {grid.Count} nodes.");
     }
 
-    private void OnDrawGizmos()
+    private void BakeNavMeshOnFloors()
     {
-        if (grid == null) return;
-
-        foreach (var node in grid.Values)
+        if (navMeshSurface == null)
         {
-            Gizmos.color = node.walkable ? Color.green : Color.red;
-            Gizmos.DrawCube(node.worldPos + Vector3.up * 0.1f, Vector3.one * 0.3f);
+            Debug.LogError("❌ NavMeshSurface component missing!");
+            return;
+        }
+
+        // 1. Disable all "Door" and "TopOfDoor" objects in the scene
+        List<GameObject> toRestore = new();
+        GameObject[] allObjects = FindObjectsOfType<GameObject>();
+
+        foreach (GameObject obj in allObjects)
+        {
+            if (!obj.activeInHierarchy) continue;
+
+            string name = obj.name;
+            if (name.StartsWith("Door") || name.StartsWith("TopOfDoor"))
+            {
+                obj.SetActive(false);
+                toRestore.Add(obj);
+            }
+        }
+
+        // 2. Bake the NavMesh
+        navMeshSurface.BuildNavMesh();
+        Debug.Log("✅ NavMesh baked at runtime (with doors temporarily disabled)");
+
+        // 3. Re-enable the objects
+        foreach (GameObject obj in toRestore)
+        {
+            obj.SetActive(true);
         }
     }
 }
@@ -93,4 +125,3 @@ public class GridNode
         this.walkable = walkable;
     }
 }
-

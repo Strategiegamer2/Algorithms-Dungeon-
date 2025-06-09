@@ -1,6 +1,7 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using Unity.VisualScripting;
 using UnityEngine;
 
 public class DungeonGenerator : MonoBehaviour
@@ -32,6 +33,8 @@ public class DungeonGenerator : MonoBehaviour
     private Dictionary<Room, List<Room>> graph = new Dictionary<Room, List<Room>>();
     private System.Random rng;
     private GameObject spawnedPlayer;
+    private List<Room> allCandidateRooms = new List<Room>();
+    private List<GameObject> splitVisuals = new();
 
     private Transform roomContainer;
     private Transform floorContainer;
@@ -172,7 +175,6 @@ public class DungeonGenerator : MonoBehaviour
                     queue.Enqueue(current.right);
                     activeLeaves.Add(current.left);
                     activeLeaves.Add(current.right);
-                    yield return new WaitForSeconds(splitDelay);
                 }
             }
 
@@ -186,18 +188,71 @@ public class DungeonGenerator : MonoBehaviour
                 }
             }
 
+            yield return StartCoroutine(DrawRoomsAnimated(activeLeaves));
+
+            // Step 1: Sort by area (smallest first)
+            List<Room> sortedByArea = rooms.OrderBy(r => r.width * r.height).ToList();
+
+            // Step 2: Calculate how many to prune
+            int countToRemove = Mathf.FloorToInt(sortedByArea.Count * (percentRoomsToRemove / 100f));
+
+            // Step 3: Select rooms to remove
+            List<Room> candidatesToRemove = sortedByArea.Take(countToRemove).ToList();
+
+            Debug.Log($"Pruned {candidatesToRemove.Count} out of {rooms.Count} rooms ({(100f * candidatesToRemove.Count / rooms.Count):0.#}%)");
+
+            // Step 4: Keep the rest
+            List<Room> remainingRooms = sortedByArea.Skip(countToRemove).ToList();
+
+            foreach (Room pruned in candidatesToRemove)
+            {
+                GameObject prunedParentObj = new GameObject($"PrunedRoom ({pruned.x}, {pruned.y})");
+                prunedParentObj.transform.parent = roomContainer;
+
+                // White filled area (Quad)
+                GameObject fill = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                fill.name = "WhiteFill";
+                fill.transform.parent = prunedParentObj.transform;
+                fill.transform.position = new Vector3(pruned.x + pruned.width / 2f, 0.005f, pruned.y + pruned.height / 2f);
+                fill.transform.rotation = Quaternion.Euler(90f, 0f, 0f); // Make it face up
+                fill.transform.localScale = new Vector3(pruned.width, pruned.height, 1f);
+
+                // Optional: make sure it's using a plain white material
+                Material whiteMat = new Material(Shader.Find("Unlit/Color"));
+                whiteMat.color = Color.white;
+                fill.GetComponent<MeshRenderer>().material = whiteMat;
+
+                // Black outline
+                GameObject outline = new GameObject("Outline");
+                outline.transform.parent = prunedParentObj.transform;
+
+                LineRenderer lr = outline.AddComponent<LineRenderer>();
+                lr.positionCount = 5;
+                lr.useWorldSpace = true;
+                lr.material = new Material(Shader.Find("Sprites/Default"));
+                lr.startColor = lr.endColor = Color.black;
+                lr.startWidth = lr.endWidth = 0.15f;
+
+                Vector3[] corners = new Vector3[]
+                {
+                    new Vector3(pruned.x, 0.01f, pruned.y),
+                    new Vector3(pruned.x + pruned.width, 0.01f, pruned.y),
+                    new Vector3(pruned.x + pruned.width, 0.01f, pruned.y + pruned.height),
+                    new Vector3(pruned.x, 0.01f, pruned.y + pruned.height),
+                    new Vector3(pruned.x, 0.01f, pruned.y)
+                };
+                lr.SetPositions(corners);
+            }
+
+
+            allCandidateRooms = new List<Room>(rooms); // Store all rooms before pruning
+
             rooms.Sort((a, b) => {
                 int ay = a.y + a.height;
                 int by = b.y + b.height;
                 if (ay != by) return by.CompareTo(ay);
                 return a.x.CompareTo(b.x);
             });
-
-            // Try to prune smallest rooms
-            List<Room> sortedByArea = rooms.OrderBy(r => r.width * r.height).ToList();
-            int countToRemove = Mathf.FloorToInt(rooms.Count * (percentRoomsToRemove / 100f));
-            List<Room> candidatesToRemove = sortedByArea.Take(countToRemove).ToList();
-            List<Room> remainingRooms = rooms.Except(candidatesToRemove).ToList();
 
             // Build new graph for remaining rooms
             Dictionary<Room, List<Room>> newGraph = BuildGraph(remainingRooms);
@@ -212,9 +267,8 @@ public class DungeonGenerator : MonoBehaviour
             }
             else
             {
-                Debug.Log("Could not prune rooms while maintaining connectivity.");
-                finalGraph = BuildGraph(rooms); // So you get actual connectivity again
-
+                Debug.Log("Could not prune rooms while maintaining connectivity. Retrying...");
+                continue; // ← Restart generation, don't reuse unpruned rooms
             }
 
 
@@ -252,14 +306,16 @@ public class DungeonGenerator : MonoBehaviour
                 return g;
             }
 
-            // Build connections
             Dictionary<Room, List<Room>> actualDoorGraph = new();
-            foreach (Room r in finalRooms) actualDoorGraph[r] = new List<Room>();
+            foreach (Room r in finalRooms)
+                actualDoorGraph[r] = new List<Room>();
 
-            yield return StartCoroutine(PlaceDoorsAnimated(finalRooms, finalGraph, actualDoorGraph));
+            List<Vector2Int> doorPositions = new();
+            yield return StartCoroutine(BuildGraphAnimated(finalRooms, finalGraph, actualDoorGraph, doorPositions));
 
-            rooms = finalRooms.Where(r => actualDoorGraph.ContainsKey(r)).ToList();
-            graph = actualDoorGraph; // Only rooms with doors get connections now
+            rooms = remainingRooms.Where(r => actualDoorGraph.ContainsKey(r)).ToList();
+            graph = actualDoorGraph;
+            connected = IsGraphConnected(graph);
 
 
             // Now check if the graph is connected
@@ -269,8 +325,25 @@ public class DungeonGenerator : MonoBehaviour
             {
                 Debug.Log("Dungeon generated with full connectivity.");
 
-                yield return StartCoroutine(DrawRoomsAnimated());
+                foreach (GameObject split in splitVisuals)
+                {
+                    Destroy(split);
+                }
+                splitVisuals.Clear();
+
                 yield return StartCoroutine(SpawnFloorTiles());
+
+                // Remove leaf outlines (yellow)
+                foreach (GameObject obj in roomVisuals.ToList())
+                {
+                    if (obj.name.StartsWith("Leaf"))
+                    {
+                        Destroy(obj);
+                        roomVisuals.Remove(obj);
+                    }
+                }
+
+                yield return StartCoroutine(PlaceDoorsVisuals(doorPositions));
                 yield return StartCoroutine(SpawnWalls(rooms, graph));
                 yield return StartCoroutine(FillUnclaimedWallSegments());
                 yield return StartCoroutine(DrawGraphConnections());
@@ -285,39 +358,35 @@ public class DungeonGenerator : MonoBehaviour
         }
     }
 
-
-    IEnumerator DrawRoomsAnimated()
+    IEnumerator DrawRoomsAnimated(List<Leaf> leafs)
     {
-        foreach (Room room in rooms)
+        foreach (Leaf leaf in leafs)
         {
-            GameObject roomObj = new GameObject($"Room ({room.x}, {room.y})");
-            roomObj.transform.parent = roomContainer;
-            roomVisuals.Add(roomObj);
+            GameObject leafObj = new GameObject($"Leaf ({leaf.x}, {leaf.y})");
+            leafObj.transform.parent = roomContainer;
+            roomVisuals.Add(leafObj);
 
-            LineRenderer lr = roomObj.AddComponent<LineRenderer>();
+            LineRenderer lr = leafObj.AddComponent<LineRenderer>();
             lr.startWidth = 0.2f;
             lr.endWidth = 0.2f;
             lr.useWorldSpace = true;
             lr.material = new Material(Shader.Find("Sprites/Default"));
-            lr.startColor = Color.blue;
-            lr.endColor = Color.blue;
+            lr.startColor = Color.yellow;
+            lr.endColor = Color.yellow;
 
             Vector3[] corners = new Vector3[]
             {
-                new Vector3(room.x, 0, room.y),
-                new Vector3(room.x + room.width, 0, room.y),
-                new Vector3(room.x + room.width, 0, room.y + room.height),
-                new Vector3(room.x, 0, room.y + room.height),
-                new Vector3(room.x, 0, room.y)
+            new Vector3(leaf.x, 0, leaf.y),
+            new Vector3(leaf.x + leaf.width, 0, leaf.y),
+            new Vector3(leaf.x + leaf.width, 0, leaf.y + leaf.height),
+            new Vector3(leaf.x, 0, leaf.y + leaf.height),
+            new Vector3(leaf.x, 0, leaf.y)
             };
 
-            lr.positionCount = 0;
-            for (int i = 0; i < corners.Length; i++)
-            {
-                lr.positionCount++;
-                lr.SetPosition(i, corners[i]);
-                yield return new WaitForSeconds(lineDrawDelay);
-            }
+            lr.positionCount = corners.Length;
+            lr.SetPositions(corners);
+
+            yield return new WaitForSeconds(lineDrawDelay); // Only once per room
         }
     }
 
@@ -477,9 +546,7 @@ public class DungeonGenerator : MonoBehaviour
         yield return null;
     }
 
-
-
-    IEnumerator PlaceDoorsAnimated(List<Room> finalRooms, Dictionary<Room, List<Room>> finalGraph, Dictionary<Room, List<Room>> actualDoorGraph)
+    IEnumerator BuildGraphAnimated(List<Room> finalRooms, Dictionary<Room, List<Room>> finalGraph, Dictionary<Room, List<Room>> actualDoorGraph, List<Vector2Int> doorPositions)
     {
         for (int i = 0; i < finalRooms.Count; i++)
         {
@@ -488,7 +555,6 @@ public class DungeonGenerator : MonoBehaviour
                 Room roomA = finalRooms[i];
                 Room roomB = finalRooms[j];
 
-                // Only place a door if they're connected in the graph
                 if (!finalGraph[roomA].Contains(roomB)) continue;
 
                 if (roomA.x == roomB.x + roomB.width || roomB.x == roomA.x + roomA.width)
@@ -499,12 +565,9 @@ public class DungeonGenerator : MonoBehaviour
                     {
                         int doorY = rng.Next(yMin, yMax);
                         int doorX = (roomA.x == roomB.x + roomB.width) ? roomA.x : roomB.x;
-                        PlaceDoorOnWall(doorX, doorY, true);
-
-                        // ✅ Log actual connection because a door was placed
                         actualDoorGraph[roomA].Add(roomB);
                         actualDoorGraph[roomB].Add(roomA);
-
+                        doorPositions.Add(new Vector2Int(doorX, doorY)); // Save for later
                         yield return new WaitForSeconds(doorDelay);
                     }
                 }
@@ -516,12 +579,9 @@ public class DungeonGenerator : MonoBehaviour
                     {
                         int doorX = rng.Next(xMin, xMax);
                         int doorY = (roomA.y == roomB.y + roomB.height) ? roomA.y : roomB.y;
-                        PlaceDoorOnWall(doorX, doorY, false);
-
-                        // ✅ Log actual connection because a door was placed
                         actualDoorGraph[roomA].Add(roomB);
                         actualDoorGraph[roomB].Add(roomA);
-
+                        doorPositions.Add(new Vector2Int(doorX, doorY)); // Save for later
                         yield return new WaitForSeconds(doorDelay);
                     }
                 }
@@ -529,7 +589,16 @@ public class DungeonGenerator : MonoBehaviour
         }
     }
 
-
+    IEnumerator PlaceDoorsVisuals(List<Vector2Int> doorPositions)
+    {
+        foreach (Vector2Int pos in doorPositions)
+        {
+            // Determine direction (basic assumption — you may want to store it in step 1 if needed)
+            bool isVertical = false; // You can improve this with better logic later if needed
+            PlaceDoorOnWall(pos.x, pos.y, isVertical);
+            yield return new WaitForSeconds(doorDelay);
+        }
+    }
 
     IEnumerator DrawGraphConnections()
     {

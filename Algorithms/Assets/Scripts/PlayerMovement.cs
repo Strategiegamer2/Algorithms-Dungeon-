@@ -1,6 +1,7 @@
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.AI;
 
 public class PlayerMovement : MonoBehaviour
 {
@@ -10,13 +11,15 @@ public class PlayerMovement : MonoBehaviour
     private List<Vector3> currentPath = new();
     private bool isMoving = false;
 
+    private NavMeshAgent navAgent;
+
     private void Awake()
     {
-        // Auto-find the PathfindingManager in the scene
-        if (pathfindingManager == null)
-        {
-            pathfindingManager = FindObjectOfType<PathfindingManager>();
-        }
+        pathfindingManager ??= FindObjectOfType<PathfindingManager>();
+        navAgent = GetComponent<NavMeshAgent>();
+
+        if (navAgent != null)
+            navAgent.enabled = pathfindingManager.useUnityNavMesh;
     }
 
     void Update()
@@ -26,7 +29,7 @@ public class PlayerMovement : MonoBehaviour
             TryMoveToClickedPosition();
         }
 
-        if (isMoving)
+        if (!pathfindingManager.useUnityNavMesh && isMoving)
         {
             FollowPath();
         }
@@ -37,21 +40,34 @@ public class PlayerMovement : MonoBehaviour
         Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
         if (Physics.Raycast(ray, out RaycastHit hit, 100f))
         {
-            Vector3 clickedWorldPos = hit.point;
-            Vector2Int targetGrid = new(Mathf.RoundToInt(clickedWorldPos.x), Mathf.RoundToInt(clickedWorldPos.z));
-            Vector2Int startGrid = new(Mathf.RoundToInt(transform.position.x), Mathf.RoundToInt(transform.position.z));
+            // Ignore clicks on walls (safety check)
+            if (hit.collider.CompareTag("Wall")) return;
 
-            if (pathfindingManager.grid.TryGetValue(targetGrid, out var targetNode) && targetNode.walkable)
+            Vector3 clickedWorldPos = hit.point;
+
+            if (pathfindingManager.useUnityNavMesh)
             {
-                currentPath = FindPath(startGrid, targetGrid);
-                if (currentPath.Count > 0)
+                if (navAgent != null)
                 {
-                    isMoving = true;
+                    navAgent.SetDestination(clickedWorldPos);
+                    Debug.Log("🧭 Using Unity NavMeshAgent to move.");
                 }
             }
-        }
+            else
+            {
+                Vector2Int targetGrid = new(Mathf.RoundToInt(clickedWorldPos.x), Mathf.RoundToInt(clickedWorldPos.z));
+                Vector2Int startGrid = new(Mathf.RoundToInt(transform.position.x), Mathf.RoundToInt(transform.position.z));
 
-        Debug.Log("Hit: " + hit.collider.name + " Tag: " + hit.collider.tag);
+                if (pathfindingManager.grid.TryGetValue(targetGrid, out var targetNode) && targetNode.walkable)
+                {
+                    currentPath = FindPath(startGrid, targetGrid);
+                    isMoving = currentPath.Count > 0;
+                    Debug.Log($"🧠 A* path with {currentPath.Count} steps.");
+                }
+            }
+
+            Debug.Log($"Clicked: {hit.collider.name} [{hit.collider.tag}]");
+        }
     }
 
     void FollowPath()
@@ -73,46 +89,78 @@ public class PlayerMovement : MonoBehaviour
 
     List<Vector3> FindPath(Vector2Int start, Vector2Int end)
     {
-        Debug.Log($"Path found with {currentPath.Count} steps.");
-        // Simple BFS for now; can be replaced with full A* later
-        Queue<Vector2Int> queue = new();
-        Dictionary<Vector2Int, Vector2Int> cameFrom = new();
-        HashSet<Vector2Int> visited = new();
+        var openSet = new PriorityQueue<Vector2Int>();
+        var cameFrom = new Dictionary<Vector2Int, Vector2Int>();
+        var gScore = new Dictionary<Vector2Int, float>();
+        var fScore = new Dictionary<Vector2Int, float>();
 
-        queue.Enqueue(start);
-        visited.Add(start);
+        openSet.Enqueue(start, 0);
+        gScore[start] = 0;
+        fScore[start] = Heuristic(start, end);
 
-        while (queue.Count > 0)
+        while (openSet.Count > 0)
         {
-            Vector2Int current = queue.Dequeue();
-            if (current == end) break;
+            Vector2Int current = openSet.Dequeue();
 
-            foreach (Vector2Int dir in new[] {
-                Vector2Int.up, Vector2Int.down, Vector2Int.left, Vector2Int.right
-            })
+            if (current == end)
+            {
+                // Reconstruct path
+                List<Vector3> path = new();
+                while (current != start)
+                {
+                    path.Insert(0, pathfindingManager.grid[current].worldPos + Vector3.up * 0.5f);
+                    current = cameFrom[current];
+                }
+                return path;
+            }
+
+            foreach (Vector2Int dir in new[] { Vector2Int.up, Vector2Int.down, Vector2Int.left, Vector2Int.right })
             {
                 Vector2Int neighbor = current + dir;
+                if (!pathfindingManager.grid.TryGetValue(neighbor, out GridNode node) || !node.walkable)
+                    continue;
 
-                if (visited.Contains(neighbor)) continue;
-                if (!pathfindingManager.grid.TryGetValue(neighbor, out var node)) continue;
-                if (!node.walkable) continue;
-
-                queue.Enqueue(neighbor);
-                visited.Add(neighbor);
-                cameFrom[neighbor] = current;
+                float tentativeG = gScore[current] + 1;
+                if (!gScore.ContainsKey(neighbor) || tentativeG < gScore[neighbor])
+                {
+                    cameFrom[neighbor] = current;
+                    gScore[neighbor] = tentativeG;
+                    fScore[neighbor] = tentativeG + Heuristic(neighbor, end);
+                    openSet.Enqueue(neighbor, fScore[neighbor]);
+                }
             }
         }
 
-        List<Vector3> path = new();
-        if (!cameFrom.ContainsKey(end)) return path; // No path found
+        return new(); // No path found
+    }
 
-        Vector2Int step = end;
-        while (step != start)
+    float Heuristic(Vector2Int a, Vector2Int b)
+    {
+        return Mathf.Abs(a.x - b.x) + Mathf.Abs(a.y - b.y); // Manhattan distance
+    }
+
+    public class PriorityQueue<T>
+    {
+        private readonly List<(T item, float priority)> elements = new();
+
+        public int Count => elements.Count;
+
+        public void Enqueue(T item, float priority)
         {
-            path.Insert(0, pathfindingManager.grid[step].worldPos + Vector3.up * 0.5f);
-            step = cameFrom[step];
+            elements.Add((item, priority));
         }
 
-        return path;
+        public T Dequeue()
+        {
+            int bestIndex = 0;
+            for (int i = 1; i < elements.Count; i++)
+            {
+                if (elements[i].priority < elements[bestIndex].priority)
+                    bestIndex = i;
+            }
+            T bestItem = elements[bestIndex].item;
+            elements.RemoveAt(bestIndex);
+            return bestItem;
+        }
     }
 }
