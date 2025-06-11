@@ -154,7 +154,7 @@ MonoBehaviour:
   splitDelay: 0.05
   lineDrawDelay: 0.02
   doorDelay: 0.03
-  percentRoomsToRemove: 60
+  percentRoomsToRemove: 10
   seed: 1
   floorPrefab: {fileID: 2247096994821176331, guid: 237ad7b6dc7492f4e8b7c95bcd880dbe, type: 3}
   doorPrefab: {fileID: 6310827500245734403, guid: 989fa0b5e17d5a146b40ddc3f5a00acf, type: 3}

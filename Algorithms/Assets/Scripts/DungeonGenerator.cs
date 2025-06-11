@@ -65,12 +65,21 @@ public class DungeonGenerator : MonoBehaviour
     {
         rng = new System.Random(seed);
 
-        foreach (GameObject go in roomVisuals)
-            Destroy(go);
+        // Destroy previous dungeon visual tree
+        GameObject previous = GameObject.Find("DungeonVisuals");
+        if (previous != null)
+            Destroy(previous);
+
+        // Clear pathfinding grid & nav mesh
+        FindObjectOfType<PathfindingManager>()?.ClearNavMesh();
+
+        // Clear internal state
         roomVisuals.Clear();
+        splitVisuals.Clear();
         rooms.Clear();
         activeLeaves.Clear();
         graph.Clear();
+        allCandidateRooms.Clear();
 
         if (spawnedPlayer != null)
         {
@@ -80,7 +89,6 @@ public class DungeonGenerator : MonoBehaviour
 
         StartCoroutine(GenerateBSPDungeonAnimated());
     }
-
 
     void DrawDungeonBounds()
     {
@@ -126,7 +134,7 @@ public class DungeonGenerator : MonoBehaviour
 
         bool connected = false;
         int attempt = 0;
-        int maxAttempts = 5;
+        int maxAttempts = 3;
 
         while (!connected)
         {
@@ -164,6 +172,8 @@ public class DungeonGenerator : MonoBehaviour
                 Leaf current = queue.Dequeue();
                 bool splitSuccess = false;
 
+                // Binary Space Partitioning (BSP): Recursively splits leaf nodes horizontally or vertically
+                // This is a divide-and-conquer approach to generate room spaces efficiently
                 if (current.height >= roomMinSize * 2)
                     splitSuccess = current.Split(true, roomMinSize, rng);
                 else if (current.width >= roomMinSize * 2)
@@ -190,6 +200,7 @@ public class DungeonGenerator : MonoBehaviour
 
             yield return StartCoroutine(DrawRoomsAnimated(activeLeaves));
 
+            // Sort rooms by area (smallest first) to prioritize pruning small rooms
             // Step 1: Sort by area (smallest first)
             List<Room> sortedByArea = rooms.OrderBy(r => r.width * r.height).ToList();
 
@@ -203,6 +214,9 @@ public class DungeonGenerator : MonoBehaviour
 
             // Step 4: Keep the rest
             List<Room> remainingRooms = sortedByArea.Skip(countToRemove).ToList();
+
+            if (countToRemove == 0)
+                continue;
 
             foreach (Room pruned in candidatesToRemove)
             {
@@ -247,14 +261,15 @@ public class DungeonGenerator : MonoBehaviour
 
             allCandidateRooms = new List<Room>(rooms); // Store all rooms before pruning
 
-            rooms.Sort((a, b) => {
+            // Use remainingRooms instead of sorting rooms again
+            remainingRooms.Sort((a, b) => {
                 int ay = a.y + a.height;
                 int by = b.y + b.height;
                 if (ay != by) return by.CompareTo(ay);
                 return a.x.CompareTo(b.x);
             });
 
-            // Build new graph for remaining rooms
+            // Adjacency list used for sparse graph; efficient for dungeon connectivity checks.
             Dictionary<Room, List<Room>> newGraph = BuildGraph(remainingRooms);
 
             List<Room> finalRooms = rooms;
@@ -268,10 +283,28 @@ public class DungeonGenerator : MonoBehaviour
             else
             {
                 Debug.Log("Could not prune rooms while maintaining connectivity. Retrying...");
-                continue; // ← Restart generation, don't reuse unpruned rooms
+
+                // Clean up failed pruned visuals
+                List<GameObject> toDestroy = new();
+                foreach (Transform child in roomContainer)
+                {
+                    if (child.name.StartsWith("PrunedRoom"))
+                    {
+                        toDestroy.Add(child.gameObject);
+                    }
+                }
+                foreach (var go in toDestroy)
+                {
+                    Destroy(go);
+                }
+
+                continue;
             }
 
 
+            // O(n²) pairwise comparison of rooms to build an adjacency graph
+            // Two rooms are connected if they touch horizontally or vertically with overlapping edges
+            // This could be optimized with spatial partitioning, but n is small so this is fine
             Dictionary<Room, List<Room>> BuildGraph(List<Room> source)
             {
                 Dictionary<Room, List<Room>> g = new();

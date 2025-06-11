@@ -76,6 +76,20 @@ public class PathfindingManager : MonoBehaviour
         Debug.Log($"✅ Grid built with {grid.Count} nodes.");
     }
 
+    public void ClearNavMesh()
+    {
+        grid.Clear();
+
+        if (useUnityNavMesh && navMeshSurface != null)
+        {
+            // Clear navmesh data from the surface
+            navMeshSurface.RemoveData();
+            Debug.Log("🧹 Cleared Unity NavMesh data.");
+        }
+
+        Debug.Log("🧹 Cleared pathfinding grid.");
+    }
+
     private void BakeNavMeshOnFloors()
     {
         if (navMeshSurface == null)

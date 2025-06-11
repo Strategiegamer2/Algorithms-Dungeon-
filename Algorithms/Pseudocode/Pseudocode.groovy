@@ -80,6 +80,8 @@ void PruneRooms()
     }
 }
 
+// For simplicity, connect each room to its nearest unconnected neighbor.
+// O(n²) complexity, acceptable here due to limited number of rooms (~50).
 5. Generate Graph Connections Between Rooms: Build graph from room centers
 Connect nearest neighbors using Delaunay/MST or simple closest connections
 
@@ -94,7 +96,7 @@ void BuildGraph()
 
     foreach (Node a in graph.nodes)
     {
-        Node b = FindNearestUnconnectedNode(a);
+        Node b = FindNearestUnconnectedNode(a); // O(n)
         if (b != null)
         {
             graph.Connect(a, b);
